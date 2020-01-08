@@ -10,8 +10,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var bSubscribeCnt = 0
-
 // WsClient struct define
 type WsClient struct {
 	conn   *websocket.Conn
@@ -71,7 +69,7 @@ func NewWsClient(l *log.Logger) (c *WsClient, err error) {
 
 	d := &websocket.Dialer{
 		Subprotocols:    []string{"p1", "p2"},
-		ReadBufferSize:  1024,
+		ReadBufferSize:  2048,
 		WriteBufferSize: 1024,
 		Proxy:           http.ProxyFromEnvironment,
 	}
@@ -86,12 +84,12 @@ func NewWsClient(l *log.Logger) (c *WsClient, err error) {
 }
 
 // SubscribeDepth Subscribe a market depth
-func (w *WsClient) SubscribeDepth(market string, ch chan *WsDepthEvent) (DepthSubscription, error) {
+func (w *WsClient) SubscribeDepth(id int, market string, ch chan *WsDepthEvent) (DepthSubscription, error) {
 	handler := func(ev *WsDepthEvent) {
 		ch <- ev
 	}
 
-	unsubscriber, err := w.subscribeChannel("depth", []string{market}, handler)
+	unsubscriber, err := w.subscribeChannel(id, "depth", []string{market + "@depth"}, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -117,12 +115,11 @@ func (w *WsClient) SubscribeDepth(market string, ch chan *WsDepthEvent) (DepthSu
 	}, nil
 }
 
-func (w *WsClient) subscribeChannel(s string, params []string, handler interface{}) (func(), error) {
-	bSubscribeCnt++
+func (w *WsClient) subscribeChannel(id int, s string, params []string, handler interface{}) (func(), error) {
 	req := &subscriptionCmd{
 		Method: "SUBSCRIBE",
 		Params: params,
-		ID:     bSubscribeCnt,
+		ID:     id,
 	}
 
 	topic := toEventTopic(s, params)
@@ -141,64 +138,85 @@ func (w *WsClient) sendReq(msg interface{}) error {
 	w.connMu.Lock()
 	defer w.connMu.Unlock()
 
+	w.errLog.Println("sendReq", msg)
 	return w.conn.WriteJSON(msg)
 }
 
-func (w *WsClient) readRsp(msg interface{}) error {
+func (w *WsClient) readRsp() (messageType int, p []byte, err error) {
 	w.connMu.RLock()
 	defer w.connMu.RUnlock()
 
-	return w.conn.ReadJSON(msg)
+	return w.conn.ReadMessage()
 }
 
 func (w *WsClient) handleResponse() {
-	errCh := make(chan error, 1)
 	for {
-		resp := subscriptionRsp{}
+		// resp := subscriptionRsp{}
 
 		select {
-		case errCh <- w.readRsp(&resp):
-			if err := <-errCh; err != nil {
-				w.errLog.Printf("Failed to read JSON, %v\n", err)
-				continue
-			}
 
-			w.procResponse(resp)
 		case <-w.stopCh:
 			return
+		default:
+			if _, message, err := w.readRsp(); err != nil {
+				w.errLog.Printf("Failed to read Response, %v\n", err)
+				continue
+			} else {
+				w.procResponse(message)
+			}
+
 		}
 	}
 }
 
-func (w *WsClient) procResponse(resp subscriptionRsp) {
-	// TODO resp["info"]
-	if resp["id"] != nil {
-
+func (w *WsClient) procResponse(resp []byte) {
+	j, err := newJSON(resp)
+	if err != nil {
+		w.errLog.Println(err)
+		return
 	}
 
-	switch resp["e"] {
+	switch j.Get("e").MustString() {
 	case "depthUpdate":
-		ev := &WsDepthEvent{}
 
-		// decode
-		if err := mapStruct(resp, &ev); err != nil {
-			w.errLog.Println("Failed to decode depth response", err)
-			return
+		// mapStruct
+		event := new(WsDepthEvent)
+		event.Event = j.Get("e").MustString()
+		event.Time = j.Get("E").MustInt64()
+		event.Symbol = j.Get("s").MustString()
+		event.UpdateID = j.Get("u").MustInt64()
+		event.FirstUpdateID = j.Get("U").MustInt64()
+		bidsLen := len(j.Get("b").MustArray())
+		event.Bids = make([]Bid, bidsLen)
+		for i := 0; i < bidsLen; i++ {
+			item := j.Get("b").GetIndex(i)
+			event.Bids[i] = Bid{
+				Price:    item.GetIndex(0).MustString(),
+				Quantity: item.GetIndex(1).MustString(),
+			}
 		}
-
+		asksLen := len(j.Get("a").MustArray())
+		event.Asks = make([]Ask, asksLen)
+		for i := 0; i < asksLen; i++ {
+			item := j.Get("a").GetIndex(i)
+			event.Asks[i] = Ask{
+				Price:    item.GetIndex(0).MustString(),
+				Quantity: item.GetIndex(1).MustString(),
+			}
+		}
 		// Publish to eventbus then to channel
 		topic := toEventTopic("depth", []string{
-			ev.Symbol,
+			event.Symbol,
 		})
-		go w.evBus.Publish(topic, ev)
+		// w.errLog.Println("depthUpdate", event)
+		go w.evBus.Publish(topic, event)
 	default:
-		b, _ := json.Marshal(resp)
-		w.errLog.Println("Unhandled message", string(b))
+		w.errLog.Println("Unhandled message", string(resp))
 	}
 }
 
 // Close WsClient
 func (w *WsClient) Close() {
-	w.stopCh <- struct{}{}
 	w.conn.Close()
+	w.stopCh <- struct{}{}
 }
