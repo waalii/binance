@@ -69,7 +69,7 @@ func NewWsClient(l *log.Logger) (c *WsClient, err error) {
 
 	d := &websocket.Dialer{
 		Subprotocols:    []string{"p1", "p2"},
-		ReadBufferSize:  2048,
+		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		Proxy:           http.ProxyFromEnvironment,
 	}
@@ -134,37 +134,40 @@ func (w *WsClient) subscribeChannel(id int, s string, params []string, handler i
 	return unsubscriber, w.sendReq(req)
 }
 
-func (w *WsClient) sendReq(msg interface{}) error {
+func (w *WsClient) sendReq(msg interface{}) (err error) {
+	w.errLog.Println("sendReq in", w.connMu)
 	w.connMu.Lock()
 	defer w.connMu.Unlock()
 
-	w.errLog.Println("sendReq", msg)
-	return w.conn.WriteJSON(msg)
+	err = w.conn.WriteJSON(msg)
+	w.errLog.Println("sendReq out", w.connMu)
+	return
 }
 
-func (w *WsClient) readRsp() (messageType int, p []byte, err error) {
+func (w *WsClient) readRsp(p *[]byte) (err error) {
+	w.errLog.Println("readRsp in", w.connMu)
 	w.connMu.RLock()
 	defer w.connMu.RUnlock()
-
-	return w.conn.ReadMessage()
+	w.errLog.Println("readRsp ing", w.connMu)
+	_, *p, err = w.conn.ReadMessage()
+	w.errLog.Println("readRsp out", w.connMu)
+	return
 }
 
 func (w *WsClient) handleResponse() {
+	errCh := make(chan error, 1)
 	for {
-		// resp := subscriptionRsp{}
+		resp := []byte{}
 
 		select {
-
-		case <-w.stopCh:
-			return
-		default:
-			if _, message, err := w.readRsp(); err != nil {
+		case errCh <- w.readRsp(&resp):
+			if err := <-errCh; err != nil {
 				w.errLog.Printf("Failed to read Response, %v\n", err)
 				continue
-			} else {
-				w.procResponse(message)
 			}
-
+			w.procResponse(resp)
+		case <-w.stopCh:
+			return
 		}
 	}
 }
