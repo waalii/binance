@@ -3,7 +3,7 @@ package binance
 import (
 	"encoding/json"
 	"log"
-	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/asaskevich/EventBus"
@@ -71,7 +71,7 @@ func NewWsClient(l *log.Logger) (c *WsClient, err error) {
 		Subprotocols:    []string{"p1", "p2"},
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		Proxy:           http.ProxyFromEnvironment,
+		// Proxy:           http.ProxyFromEnvironment,
 	}
 
 	if c.conn, _, err = d.Dial(c.URL, nil); err != nil {
@@ -123,6 +123,7 @@ func (w *WsClient) subscribeChannel(id int, s string, params []string, handler i
 	}
 
 	topic := toEventTopic(s, params)
+	// w.errLog.Println("Subscribe", topic)
 	if err := w.evBus.SubscribeAsync(topic, handler, true); err != nil {
 		return nil, err
 	}
@@ -135,22 +136,17 @@ func (w *WsClient) subscribeChannel(id int, s string, params []string, handler i
 }
 
 func (w *WsClient) sendReq(msg interface{}) (err error) {
-	w.errLog.Println("sendReq in", w.connMu)
 	w.connMu.Lock()
 	defer w.connMu.Unlock()
 
 	err = w.conn.WriteJSON(msg)
-	w.errLog.Println("sendReq out", w.connMu)
 	return
 }
 
 func (w *WsClient) readRsp(p *[]byte) (err error) {
-	w.errLog.Println("readRsp in", w.connMu)
-	w.connMu.RLock()
-	defer w.connMu.RUnlock()
-	w.errLog.Println("readRsp ing", w.connMu)
+	// w.connMu.RLock()
+	// defer w.connMu.RUnlock()
 	_, *p, err = w.conn.ReadMessage()
-	w.errLog.Println("readRsp out", w.connMu)
 	return
 }
 
@@ -186,7 +182,7 @@ func (w *WsClient) procResponse(resp []byte) {
 		event := new(WsDepthEvent)
 		event.Event = j.Get("e").MustString()
 		event.Time = j.Get("E").MustInt64()
-		event.Symbol = j.Get("s").MustString()
+		event.Symbol = strings.ToLower(j.Get("s").MustString())
 		event.UpdateID = j.Get("u").MustInt64()
 		event.FirstUpdateID = j.Get("U").MustInt64()
 		bidsLen := len(j.Get("b").MustArray())
@@ -209,9 +205,9 @@ func (w *WsClient) procResponse(resp []byte) {
 		}
 		// Publish to eventbus then to channel
 		topic := toEventTopic("depth", []string{
-			event.Symbol,
+			event.Symbol + "@depth",
 		})
-		// w.errLog.Println("depthUpdate", event)
+		// w.errLog.Println("Publish", topic)
 		go w.evBus.Publish(topic, event)
 	default:
 		w.errLog.Println("Unhandled message", string(resp))
