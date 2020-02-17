@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/asaskevich/EventBus"
 	"github.com/gorilla/websocket"
@@ -12,10 +13,11 @@ import (
 
 // WsClient struct define
 type WsClient struct {
-	conn   *websocket.Conn
-	connMu sync.RWMutex
-	stopCh chan struct{}
-	evBus  EventBus.Bus
+	conn    *websocket.Conn
+	connMu  sync.RWMutex
+	stopCh  chan struct{}
+	reStart chan struct{}
+	evBus   EventBus.Bus
 
 	URL    string
 	errLog *log.Logger
@@ -59,12 +61,13 @@ func toEventTopic(topic interface{}, params interface{}) string {
 }
 
 // NewWsClient returns a websocket client.
-func NewWsClient(l *log.Logger) (c *WsClient, err error) {
+func NewWsClient(l *log.Logger, reStart chan struct{}) (c *WsClient, err error) {
 	c = &WsClient{
-		stopCh: make(chan struct{}),
-		evBus:  EventBus.New(),
-		URL:    baseURL,
-		errLog: l,
+		stopCh:  make(chan struct{}),
+		reStart: reStart,
+		evBus:   EventBus.New(),
+		URL:     baseURL,
+		errLog:  l,
 	}
 
 	d := &websocket.Dialer{
@@ -152,15 +155,21 @@ func (w *WsClient) readRsp(p *[]byte) (err error) {
 
 func (w *WsClient) handleResponse() {
 	errCh := make(chan error, 1)
+	errCnt := 0
 	for {
 		resp := []byte{}
-
 		select {
 		case errCh <- w.readRsp(&resp):
 			if err := <-errCh; err != nil {
+				if errCnt++; errCnt > 5 {
+					w.reStart <- struct{}{}
+					return
+				}
 				w.errLog.Printf("Failed to read Response, %v\n", err)
+				time.Sleep(6 * time.Second)
 				continue
 			}
+			errCnt = 0
 			w.procResponse(resp)
 		case <-w.stopCh:
 			return
