@@ -3,18 +3,14 @@ module github.com/waalii/binance
 go 1.13
 
 require (
-	github.com/bitly/go-simplejson v0.5.0
-	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
-	github.com/davecgh/go-spew v1.1.0 // indirect
-	github.com/gorilla/websocket v1.2.0
-	github.com/kr/pretty v0.2.0 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/stretchr/objx v0.1.0 // indirect
-	github.com/stretchr/testify v1.2.1
+	github.com/adshao/go-binance v0.0.0-20200302052924-65a935d32ae9
 	github.com/asaskevich/EventBus v0.0.0-20180315140547-d46933a94f05
 	github.com/bitly/go-simplejson v0.5.0
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
+	github.com/davecgh/go-spew v1.1.0 // indirect
 	github.com/gorilla/websocket v1.4.1
-	github.com/kr/pretty v0.1.0 // indirect
+	github.com/kr/pretty v0.2.0 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/stretchr/objx v0.1.0 // indirect
 	github.com/stretchr/testify v1.4.0
 )
