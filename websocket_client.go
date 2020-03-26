@@ -2,6 +2,7 @@ package binance
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -30,8 +31,6 @@ type subscriptionCmd struct {
 	Params interface{} `json:"params,omitempty"`
 	ID     int         `json:"id,omitempty"`
 }
-
-type subscriptionRsp map[string]interface{}
 
 // DepthSubscription interface for export
 type DepthSubscription interface {
@@ -111,6 +110,63 @@ func (s *klineSubscription) Close() {
 	s.unsubscribe()
 }
 
+type AccountInfoSubscription interface {
+	Chan() <-chan *WsAccountInfoEvent
+	Close()
+}
+
+type accountInfoSubscription struct {
+	ch          <-chan *WsAccountInfoEvent
+	onEvent     func(ob *WsAccountInfoEvent)
+	unsubscribe func()
+}
+
+func (s *accountInfoSubscription) Chan() <-chan *WsAccountInfoEvent {
+	return s.ch
+}
+
+func (s *accountInfoSubscription) Close() {
+	s.unsubscribe()
+}
+
+type AccountPositionSubscription interface {
+	Chan() <-chan *WsAccountPositionEvent
+	Close()
+}
+
+type accountPositionSubscription struct {
+	ch          <-chan *WsAccountPositionEvent
+	onEvent     func(ob *WsAccountPositionEvent)
+	unsubscribe func()
+}
+
+func (s *accountPositionSubscription) Chan() <-chan *WsAccountPositionEvent {
+	return s.ch
+}
+
+func (s *accountPositionSubscription) Close() {
+	s.unsubscribe()
+}
+
+type OrderReportSubscription interface {
+	Chan() <-chan *WsOrderReportEvent
+	Close()
+}
+
+type orderReportSubscription struct {
+	ch          <-chan *WsOrderReportEvent
+	onEvent     func(ob *WsOrderReportEvent)
+	unsubscribe func()
+}
+
+func (s *orderReportSubscription) Chan() <-chan *WsOrderReportEvent {
+	return s.ch
+}
+
+func (s *orderReportSubscription) Close() {
+	s.unsubscribe()
+}
+
 func toEventTopic(topic interface{}, params interface{}) string {
 	s, _ := json.Marshal([]interface{}{
 		topic,
@@ -121,12 +177,17 @@ func toEventTopic(topic interface{}, params interface{}) string {
 }
 
 // NewWsClient returns a websocket client.
-func NewWsClient(l, e *log.Logger, reStart chan struct{}) (c *WsClient, err error) {
+func NewWsClient(l, e *log.Logger, reStart chan struct{}, lKey ...string) (c *WsClient, err error) {
+	streamURL := baseURL
+
+	if len(lKey) > 0 && lKey[0] != "" {
+		streamURL = fmt.Sprintf("%s/%s", baseURL, lKey[0])
+	}
 	c = &WsClient{
 		stopCh:  make(chan struct{}),
 		reStart: reStart,
 		evBus:   EventBus.New(),
-		URL:     baseURL,
+		URL:     streamURL,
 		stdLog:  l,
 		errLog:  e,
 	}
@@ -273,6 +334,113 @@ func (w *WsClient) SubscribeKline(id int, market, interval string, ch chan *WsKl
 			}
 		},
 	}, nil
+}
+
+func (w *WsClient) SubscribeAccountInfo(ch chan *WsAccountInfoEvent) (AccountInfoSubscription, error) {
+	handler := func(ev *WsAccountInfoEvent) {
+		ch <- ev
+	}
+
+	unsubscriber, err := w.subscribeStream("account", []string{"Info"}, handler)
+	if err != nil {
+		return nil, err
+	}
+
+	return &accountInfoSubscription{
+		ch:      ch,
+		onEvent: handler,
+		unsubscribe: func() {
+			unsubscriber()
+
+			if func() bool {
+				select {
+				case <-ch:
+					return false
+				default:
+				}
+
+				return true
+			}() {
+				close(ch)
+			}
+		},
+	}, nil
+}
+
+func (w *WsClient) SubscribeAccountPosition(ch chan *WsAccountPositionEvent) (AccountPositionSubscription, error) {
+	handler := func(ev *WsAccountPositionEvent) {
+		ch <- ev
+	}
+
+	unsubscriber, err := w.subscribeStream("account", []string{"position"}, handler)
+	if err != nil {
+		return nil, err
+	}
+
+	return &accountPositionSubscription{
+		ch:      ch,
+		onEvent: handler,
+		unsubscribe: func() {
+			unsubscriber()
+
+			if func() bool {
+				select {
+				case <-ch:
+					return false
+				default:
+				}
+
+				return true
+			}() {
+				close(ch)
+			}
+		},
+	}, nil
+}
+
+func (w *WsClient) SubscribeOrderReport(ch chan *WsOrderReportEvent) (OrderReportSubscription, error) {
+	handler := func(ev *WsOrderReportEvent) {
+		ch <- ev
+	}
+
+	unsubscriber, err := w.subscribeStream("order", []string{"report"}, handler)
+	if err != nil {
+		return nil, err
+	}
+
+	return &orderReportSubscription{
+		ch:      ch,
+		onEvent: handler,
+		unsubscribe: func() {
+			unsubscriber()
+
+			if func() bool {
+				select {
+				case <-ch:
+					return false
+				default:
+				}
+
+				return true
+			}() {
+				close(ch)
+			}
+		},
+	}, nil
+}
+
+func (w *WsClient) subscribeStream(s string, params []string, handler interface{}) (func(), error) {
+	topic := toEventTopic(s, params)
+	// w.errLog.Println("Subscribe", topic)
+	if err := w.evBus.SubscribeAsync(topic, handler, true); err != nil {
+		return nil, err
+	}
+
+	unsubscriber := func() {
+		w.evBus.Unsubscribe(topic, handler)
+	}
+
+	return unsubscriber, nil
 }
 
 func (w *WsClient) subscribeChannel(id int, s string, params []string, handler interface{}) (func(), error) {
@@ -450,6 +618,152 @@ func (w *WsClient) procKline(j *simplejson.Json) (topic string, event *WsKlineEv
 
 }
 
+type WsBalance struct {
+	Asset  string `json:"a"`
+	Free   string `json:"f"`
+	Locked string `json:"l"`
+}
+
+type WsAccountInfoEvent struct {
+	Event            string      `json:"e"`
+	Time             int64       `json:"E"`
+	MakerCommission  int64       `json:"m"`
+	TakerCommission  int64       `json:"t"`
+	BuyerCommission  int64       `json:"b"`
+	SellerCommission int64       `json:"s"`
+	CanTrade         bool        `json:"T"`
+	CanWithdraw      bool        `json:"W"`
+	CanDeposit       bool        `json:"D"`
+	UpdateTime       int64       `json:"u"`
+	Balances         []WsBalance `json:"B"`
+}
+
+func (w *WsClient) procAccountInfo(j *simplejson.Json) (topic string, event *WsAccountInfoEvent) {
+	event = new(WsAccountInfoEvent)
+	event.Event = j.Get("e").MustString()
+	event.Time = j.Get("E").MustInt64()
+	event.MakerCommission = j.Get("m").MustInt64()
+	event.TakerCommission = j.Get("t").MustInt64()
+	event.BuyerCommission = j.Get("b").MustInt64()
+	event.SellerCommission = j.Get("s").MustInt64()
+	event.CanTrade = j.Get("T").MustBool()
+	event.CanWithdraw = j.Get("W").MustBool()
+	event.CanDeposit = j.Get("D").MustBool()
+	event.UpdateTime = j.Get("u").MustInt64()
+
+	bLen := len(j.Get("B").MustArray())
+	event.Balances = make([]WsBalance, bLen)
+	for i := 0; i < bLen; i++ {
+		item := j.Get("B").GetIndex(i)
+		event.Balances[i] = WsBalance{
+			Asset:  item.GetIndex(0).MustString(),
+			Free:   item.GetIndex(1).MustString(),
+			Locked: item.GetIndex(2).MustString(),
+		}
+	}
+	// Publish to eventbus then to channel
+	topic = toEventTopic("account", []string{"Info"})
+
+	return
+}
+
+type WsAccountPositionEvent struct {
+	Event      string      `json:"e"`
+	Time       int64       `json:"E"`
+	UpdateTime int64       `json:"u"`
+	Balances   []WsBalance `json:"B"`
+}
+
+func (w *WsClient) procAccountPosition(j *simplejson.Json) (topic string, event *WsAccountPositionEvent) {
+	event = new(WsAccountPositionEvent)
+	event.Event = j.Get("e").MustString()
+	event.Time = j.Get("E").MustInt64()
+	event.UpdateTime = j.Get("u").MustInt64()
+
+	bLen := len(j.Get("B").MustArray())
+	event.Balances = make([]WsBalance, bLen)
+	for i := 0; i < bLen; i++ {
+		item := j.Get("B").GetIndex(i)
+		event.Balances[i] = WsBalance{
+			Asset:  item.GetIndex(0).MustString(),
+			Free:   item.GetIndex(1).MustString(),
+			Locked: item.GetIndex(2).MustString(),
+		}
+	}
+	// Publish to eventbus then to channel
+	topic = toEventTopic("account", []string{"position"})
+
+	return
+}
+
+type WsOrderReportEvent struct {
+	Event               string `json:"e"`
+	Time                int64  `json:"E"`
+	Symbol              string `json:"s"`
+	ClientOrderID       string `json:"c"`
+	Side                string `json:"S"`
+	Type                string `json:"o"`
+	TimeInForce         string `json:"f"`
+	OrigQty             string `json:"q"`
+	Price               string `json:"p"`
+	StopPrice           string `json:"P"`
+	IcebergQty          string `json:"F"`
+	OrderListID         int64  `json:"g"`
+	EventStatus         string `json:"x"`
+	Status              string `json:"X"`
+	RejectReason        string `json:"r"`
+	OrderID             int64  `json:"i"`
+	ExecutedQty         string `json:"l"`
+	CummulativeQty      string `json:"z"`
+	LastVolume          string `json:"L"`
+	Fee                 string `json:"n"`
+	TransactTime        int64  `json:"T"`
+	TransactID          int64  `json:"t"`
+	IsOnBook            bool   `json:"w"`
+	IsMaker             bool   `json:"m"`
+	CreateTime          int64  `json:"O"`
+	CummulativeQuoteQty string `json:"Z"`
+	LastPrice           string `json:"Y"`
+	QuoteOrderQty       string `json:"Q"`
+}
+
+func (w *WsClient) procOrderReport(j *simplejson.Json) (topic string, event *WsOrderReportEvent) {
+	event = new(WsOrderReportEvent)
+	event.Event = j.Get("e").MustString()
+	event.Time = j.Get("E").MustInt64()
+	event.Symbol = j.Get("s").MustString()
+	event.ClientOrderID = j.Get("c").MustString()
+	event.Side = j.Get("S").MustString()
+	event.Type = j.Get("o").MustString()
+	event.TimeInForce = j.Get("f").MustString()
+	event.OrigQty = j.Get("q").MustString()
+	event.Price = j.Get("p").MustString()
+	event.StopPrice = j.Get("P").MustString()
+	event.IcebergQty = j.Get("F").MustString()
+	event.OrderListID = j.Get("g").MustInt64()
+	event.EventStatus = j.Get("x").MustString()
+	event.Status = j.Get("X").MustString()
+	event.RejectReason = j.Get("r").MustString()
+	event.OrderID = j.Get("i").MustInt64()
+	event.ExecutedQty = j.Get("l").MustString()
+	event.CummulativeQty = j.Get("z").MustString()
+	event.LastVolume = j.Get("L").MustString()
+	event.Fee = j.Get("n").MustString()
+	event.TransactTime = j.Get("T").MustInt64()
+	event.TransactID = j.Get("t").MustInt64()
+	event.IsOnBook = j.Get("w").MustBool()
+	event.IsMaker = j.Get("m").MustBool()
+	event.CreateTime = j.Get("O").MustInt64()
+	event.CummulativeQuoteQty = j.Get("Z").MustString()
+	event.LastPrice = j.Get("Y").MustString()
+	event.QuoteOrderQty = j.Get("Q").MustString()
+
+	// Publish to eventbus then to channel
+	topic = toEventTopic("order", []string{"report"})
+
+	return
+}
+
 func (w *WsClient) procResponse(resp []byte) {
 	j, err := newJSON(resp)
 	if err != nil {
@@ -461,15 +775,37 @@ func (w *WsClient) procResponse(resp []byte) {
 	case "depthUpdate":
 		topic, event := w.procDepthUpdate(j)
 		go w.evBus.Publish(topic, event)
+
 	case "24hrMiniTicker":
 		topic, event := w.procMiniTicker(j)
 		go w.evBus.Publish(topic, event)
+
 	case "24hrTicker":
 		topic, event := w.procTicker(j)
 		go w.evBus.Publish(topic, event)
+
 	case "kline":
 		topic, event := w.procKline(j)
 		go w.evBus.Publish(topic, event)
+
+	case "outboundAccountInfo": //交易發生的餘額更新或帳號更新，所有帳戶資產，先不處理
+		w.stdLog.Println("outboundAccountInfo", string(resp))
+		topic, event := w.procAccountInfo(j)
+		go w.evBus.Publish(topic, event)
+
+	case "outboundAccountPosition": //交易發生的餘額更新，僅有變化的資產
+		w.stdLog.Println("outboundAccountPosition", string(resp))
+		topic, event := w.procAccountPosition(j)
+		go w.evBus.Publish(topic, event)
+
+	case "balanceUpdate": //出入資金發生的餘額更新
+		w.stdLog.Println("balanceUpdate", string(resp))
+
+	case "executionReport": //訂定更新
+		w.stdLog.Println("executionReport", string(resp))
+		topic, event := w.procOrderReport(j)
+		go w.evBus.Publish(topic, event)
+
 	default:
 		if j.Get("id") != nil {
 			w.stdLog.Println("success", string(resp))
