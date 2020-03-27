@@ -15,11 +15,10 @@ import (
 
 // WsClient struct define
 type WsClient struct {
-	conn    *websocket.Conn
-	connMu  sync.RWMutex
-	stopCh  chan struct{}
-	reStart chan struct{}
-	evBus   EventBus.Bus
+	conn   *websocket.Conn
+	connMu sync.RWMutex
+	stopCh chan struct{}
+	evBus  EventBus.Bus
 
 	URL    string
 	stdLog *log.Logger
@@ -177,19 +176,18 @@ func toEventTopic(topic interface{}, params interface{}) string {
 }
 
 // NewWsClient returns a websocket client.
-func NewWsClient(l, e *log.Logger, reStart chan struct{}, lKey ...string) (c *WsClient, err error) {
+func NewWsClient(l, e *log.Logger, lKey ...string) (c *WsClient, err error) {
 	streamURL := baseURL
 
 	if len(lKey) > 0 && lKey[0] != "" {
 		streamURL = fmt.Sprintf("%s/%s", baseURL, lKey[0])
 	}
 	c = &WsClient{
-		stopCh:  make(chan struct{}),
-		reStart: reStart,
-		evBus:   EventBus.New(),
-		URL:     streamURL,
-		stdLog:  l,
-		errLog:  e,
+		stopCh: make(chan struct{}),
+		evBus:  EventBus.New(),
+		URL:    streamURL,
+		stdLog: l,
+		errLog: e,
 	}
 
 	d := &websocket.Dialer{
@@ -480,21 +478,15 @@ func (w *WsClient) readRsp(p *[]byte) (err error) {
 
 func (w *WsClient) handleResponse() {
 	errCh := make(chan error, 1)
-	errCnt := 0
 	for {
 		resp := []byte{}
 		select {
 		case errCh <- w.readRsp(&resp):
 			if err := <-errCh; err != nil {
-				if errCnt++; errCnt > 5 {
-					w.reStart <- struct{}{}
-					return
-				}
 				w.errLog.Printf("Failed to read Response, %v\n", err)
 				time.Sleep(6 * time.Second)
 				continue
 			}
-			errCnt = 0
 			w.procResponse(resp)
 		case <-w.stopCh:
 			return
