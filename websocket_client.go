@@ -604,7 +604,7 @@ func (w *WsClient) procKline(j *simplejson.Json) (topic string, event *WsKlineEv
 
 	// Publish to eventbus then to channel
 	topic = toEventTopic("kline", []string{
-		event.Symbol + "@kline",
+		event.Symbol + "@kline_" + event.Kline.Interval,
 	})
 	return
 
