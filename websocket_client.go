@@ -781,20 +781,20 @@ func (w *WsClient) procResponse(resp []byte) {
 		go w.evBus.Publish(topic, event)
 
 	case "outboundAccountInfo": //交易發生的餘額更新或帳號更新，所有帳戶資產，先不處理
-		w.stdLog.Println("outboundAccountInfo", string(resp))
+		// w.stdLog.Println("outboundAccountInfo", string(resp))
 		topic, event := w.procAccountInfo(j)
 		go w.evBus.Publish(topic, event)
 
 	case "outboundAccountPosition": //交易發生的餘額更新，僅有變化的資產
-		w.stdLog.Println("outboundAccountPosition", string(resp))
+		// w.stdLog.Println("outboundAccountPosition", string(resp))
 		topic, event := w.procAccountPosition(j)
 		go w.evBus.Publish(topic, event)
 
 	case "balanceUpdate": //出入資金發生的餘額更新
 		w.stdLog.Println("balanceUpdate", string(resp))
 
-	case "executionReport": //訂定更新
-		w.stdLog.Println("executionReport", string(resp))
+	case "executionReport": //訂單更新
+		// w.stdLog.Println("executionReport", string(resp))
 		topic, event := w.procOrderReport(j)
 		go w.evBus.Publish(topic, event)
 
