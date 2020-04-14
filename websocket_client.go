@@ -20,10 +20,9 @@ type WsClient struct {
 	stopCh chan struct{}
 	evBus  EventBus.Bus
 
-	URL       string
-	stdLog    *log.Logger
-	errLog    *log.Logger
-	isRunning bool
+	URL    string
+	stdLog *log.Logger
+	errLog *log.Logger
 }
 
 type subscriptionCmd struct {
@@ -201,7 +200,6 @@ func NewWsClient(l, e *log.Logger, lKey ...string) (c *WsClient, err error) {
 	if c.conn, _, err = d.Dial(c.URL, nil); err != nil {
 		return nil, err
 	}
-	c.isRunning = true
 	go c.handleResponse()
 
 	return
@@ -490,7 +488,6 @@ func (w *WsClient) handleResponse() {
 			}
 			w.procResponse(resp)
 		case <-w.stopCh:
-			w.isRunning = false
 			return
 		}
 	}
@@ -812,8 +809,5 @@ func (w *WsClient) procResponse(resp []byte) {
 // Close WsClient
 func (w *WsClient) Close() {
 	w.stopCh <- struct{}{}
-	for w.isRunning {
-		time.Sleep(10 * time.Millisecond)
-	}
 	w.conn.Close()
 }
