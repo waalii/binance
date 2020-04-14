@@ -482,7 +482,7 @@ func (w *WsClient) handleResponse() {
 		select {
 		case errCh <- w.readRsp(&resp):
 			if err := <-errCh; err != nil {
-				w.errLog.Printf("Failed to read Response, %v\n", err)
+				w.errLog.Printf("%v handleResponse error, %v\n", w.URL, err)
 				time.Sleep(6 * time.Second)
 				continue
 			}
