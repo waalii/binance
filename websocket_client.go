@@ -260,7 +260,6 @@ func (w *WsClient) SubscribeMinTick(id int, market string, ch chan *WsMiniMarket
 					return false
 				default:
 				}
-
 				return true
 			}() {
 				close(ch)
@@ -292,7 +291,6 @@ func (w *WsClient) SubscribeTick(id int, market string, ch chan *WsMarketStatEve
 					return false
 				default:
 				}
-
 				return true
 			}() {
 				close(ch)
@@ -355,7 +353,6 @@ func (w *WsClient) SubscribeAccountInfo(ch chan *WsAccountInfoEvent) (AccountInf
 					return false
 				default:
 				}
-
 				return true
 			}() {
 				close(ch)
@@ -386,7 +383,6 @@ func (w *WsClient) SubscribeAccountPosition(ch chan *WsAccountPositionEvent) (Ac
 					return false
 				default:
 				}
-
 				return true
 			}() {
 				close(ch)
@@ -417,7 +413,6 @@ func (w *WsClient) SubscribeOrderReport(ch chan *WsOrderReportEvent) (OrderRepor
 					return false
 				default:
 				}
-
 				return true
 			}() {
 				close(ch)
@@ -469,21 +464,28 @@ func (w *WsClient) sendReq(msg interface{}) (err error) {
 }
 
 func (w *WsClient) readRsp(p *[]byte) (err error) {
-	// w.connMu.RLock()
-	// defer w.connMu.RUnlock()
+	w.connMu.RLock()
+	defer w.connMu.RUnlock()
 	_, *p, err = w.conn.ReadMessage()
 	return
 }
 
 func (w *WsClient) handleResponse() {
 	errCh := make(chan error, 1)
+	errIn6Sec := false
 	for {
 		resp := []byte{}
 		select {
 		case errCh <- w.readRsp(&resp):
 			if err := <-errCh; err != nil {
-				w.errLog.Printf("%v handleResponse error, %v\n", w.URL, err)
-				time.Sleep(6 * time.Second)
+				if !errIn6Sec {
+					w.errLog.Printf("%v handleResponse error, %v\n", w.URL, err)
+					errIn6Sec = true
+					go func() {
+						time.Sleep(6 * time.Second)
+						errIn6Sec = false
+					}()
+				}
 				continue
 			}
 			w.procResponse(resp)
