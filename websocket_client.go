@@ -1,7 +1,6 @@
 package binance
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -166,15 +165,6 @@ func (s *orderReportSubscription) Close() {
 	s.unsubscribe()
 }
 
-func toEventTopic(topic interface{}, params interface{}) string {
-	s, _ := json.Marshal([]interface{}{
-		topic,
-		params,
-	})
-
-	return string(s)
-}
-
 // NewWsClient returns a websocket client.
 func NewWsClient(l, e *log.Logger, lKey ...string) (c *WsClient, err error) {
 	streamURL := baseURL
@@ -206,12 +196,12 @@ func NewWsClient(l, e *log.Logger, lKey ...string) (c *WsClient, err error) {
 }
 
 // SubscribeDepth Subscribe a market depth
-func (w *WsClient) SubscribeDepth(id int, market string, ch chan *WsDepthEvent) (DepthSubscription, error) {
+func (w *WsClient) SubscribeDepth(id int, params []string, ch chan *WsDepthEvent) (DepthSubscription, error) {
 	handler := func(ev *WsDepthEvent) {
 		ch <- ev
 	}
-
-	unsubscriber, err := w.subscribeChannel(id, "depth", []string{market + "@depth"}, handler)
+	// params = []string{"ethusdt@depth"}
+	unsubscriber, err := w.subscribeChannel(id, "depth", params, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -238,12 +228,12 @@ func (w *WsClient) SubscribeDepth(id int, market string, ch chan *WsDepthEvent) 
 }
 
 // SubscribeMinTick Subscribe a market depth
-func (w *WsClient) SubscribeMinTick(id int, market string, ch chan *WsMiniMarketsStatEvent) (MiniTickerSubscription, error) {
+func (w *WsClient) SubscribeMinTick(id int, params []string, ch chan *WsMiniMarketsStatEvent) (MiniTickerSubscription, error) {
 	handler := func(ev *WsMiniMarketsStatEvent) {
 		ch <- ev
 	}
-
-	unsubscriber, err := w.subscribeChannel(id, "miniTicker", []string{market + "@miniTicker"}, handler)
+	// params = []string{"ethusdt@miniTicker"}
+	unsubscriber, err := w.subscribeChannel(id, "miniTicker", params, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -269,12 +259,12 @@ func (w *WsClient) SubscribeMinTick(id int, market string, ch chan *WsMiniMarket
 }
 
 // SubscribeTick Subscribe a market depth
-func (w *WsClient) SubscribeTick(id int, market string, ch chan *WsMarketStatEvent) (TickerSubscription, error) {
+func (w *WsClient) SubscribeTick(id int, params []string, ch chan *WsMarketStatEvent) (TickerSubscription, error) {
 	handler := func(ev *WsMarketStatEvent) {
 		ch <- ev
 	}
-
-	unsubscriber, err := w.subscribeChannel(id, "ticker", []string{market + "@ticker"}, handler)
+	// params = []string{"ethusdt@ticker"}
+	unsubscriber, err := w.subscribeChannel(id, "ticker", params, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -300,12 +290,12 @@ func (w *WsClient) SubscribeTick(id int, market string, ch chan *WsMarketStatEve
 }
 
 // SubscribeKline Subscribe a market depth
-func (w *WsClient) SubscribeKline(id int, market, interval string, ch chan *WsKlineEvent) (KlineSubscription, error) {
+func (w *WsClient) SubscribeKline(id int, params []string, ch chan *WsKlineEvent) (KlineSubscription, error) {
 	handler := func(ev *WsKlineEvent) {
 		ch <- ev
 	}
-
-	unsubscriber, err := w.subscribeChannel(id, "kline", []string{market + "@kline_" + interval}, handler)
+	// params = []string{"ethusdt@kline_5m"}
+	unsubscriber, err := w.subscribeChannel(id, "kline", params, handler)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +326,7 @@ func (w *WsClient) SubscribeAccountInfo(ch chan *WsAccountInfoEvent) (AccountInf
 		ch <- ev
 	}
 
-	unsubscriber, err := w.subscribeStream("account", []string{"Info"}, handler)
+	unsubscriber, err := w.subscribeStream("accountInfo", handler)
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +356,7 @@ func (w *WsClient) SubscribeAccountPosition(ch chan *WsAccountPositionEvent) (Ac
 		ch <- ev
 	}
 
-	unsubscriber, err := w.subscribeStream("account", []string{"position"}, handler)
+	unsubscriber, err := w.subscribeStream("accountPosition", handler)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +386,7 @@ func (w *WsClient) SubscribeOrderReport(ch chan *WsOrderReportEvent) (OrderRepor
 		ch <- ev
 	}
 
-	unsubscriber, err := w.subscribeStream("order", []string{"report"}, handler)
+	unsubscriber, err := w.subscribeStream("orderReport", handler)
 	if err != nil {
 		return nil, err
 	}
@@ -421,9 +411,7 @@ func (w *WsClient) SubscribeOrderReport(ch chan *WsOrderReportEvent) (OrderRepor
 	}, nil
 }
 
-func (w *WsClient) subscribeStream(s string, params []string, handler interface{}) (func(), error) {
-	topic := toEventTopic(s, params)
-	// w.errLog.Println("Subscribe", topic)
+func (w *WsClient) subscribeStream(topic string, handler interface{}) (func(), error) {
 	if err := w.evBus.SubscribeAsync(topic, handler, true); err != nil {
 		return nil, err
 	}
@@ -435,20 +423,23 @@ func (w *WsClient) subscribeStream(s string, params []string, handler interface{
 	return unsubscriber, nil
 }
 
-func (w *WsClient) subscribeChannel(id int, s string, params []string, handler interface{}) (func(), error) {
-	req := &subscriptionCmd{
-		Method: "SUBSCRIBE",
-		Params: params,
-		ID:     id,
-	}
-
-	topic := toEventTopic(s, params)
-	// w.errLog.Println("Subscribe", topic)
+func (w *WsClient) subscribeChannel(id int, topic string, params []string, handler interface{}) (func(), error) {
 	if err := w.evBus.SubscribeAsync(topic, handler, true); err != nil {
 		return nil, err
 	}
 
+	req, unreq := &subscriptionCmd{
+		Method: "SUBSCRIBE",
+		Params: params,
+		ID:     id,
+	}, &subscriptionCmd{
+		Method: "UNSUBSCRIBE",
+		Params: params,
+		ID:     id,
+	}
+
 	unsubscriber := func() {
+		w.sendReq(unreq)
 		w.evBus.Unsubscribe(topic, handler)
 	}
 
@@ -520,10 +511,7 @@ func (w *WsClient) procDepthUpdate(j *simplejson.Json) (topic string, event *WsD
 			Quantity: item.GetIndex(1).MustString(),
 		}
 	}
-	// Publish to eventbus then to channel
-	topic = toEventTopic("depth", []string{
-		event.Symbol + "@depth",
-	})
+	topic = "depth"
 
 	return
 }
@@ -540,10 +528,7 @@ func (w *WsClient) procMiniTicker(j *simplejson.Json) (topic string, event *WsMi
 	event.BaseVolume = j.Get("v").MustString()
 	event.QuoteVolume = j.Get("q").MustString()
 
-	// Publish to eventbus then to channel
-	topic = toEventTopic("miniTicker", []string{
-		event.Symbol + "@miniTicker",
-	})
+	topic = "miniTicker"
 	return
 
 }
@@ -574,10 +559,7 @@ func (w *WsClient) procTicker(j *simplejson.Json) (topic string, event *WsMarket
 	event.LastID = j.Get("L").MustInt64()
 	event.Count = j.Get("n").MustInt64()
 
-	// Publish to eventbus then to channel
-	topic = toEventTopic("ticker", []string{
-		event.Symbol + "@ticker",
-	})
+	topic = "ticker"
 	return
 }
 
@@ -603,10 +585,7 @@ func (w *WsClient) procKline(j *simplejson.Json) (topic string, event *WsKlineEv
 	event.Kline.ActiveBuyVolume = j.Get("k").Get("V").MustString()
 	event.Kline.ActiveBuyQuoteVolume = j.Get("k").Get("Q").MustString()
 
-	// Publish to eventbus then to channel
-	topic = toEventTopic("kline", []string{
-		event.Symbol + "@kline_" + event.Kline.Interval,
-	})
+	topic = "kline"
 	return
 
 }
@@ -654,8 +633,7 @@ func (w *WsClient) procAccountInfo(j *simplejson.Json) (topic string, event *WsA
 			Locked: item.GetIndex(2).MustString(),
 		}
 	}
-	// Publish to eventbus then to channel
-	topic = toEventTopic("account", []string{"Info"})
+	topic = "accountInfo"
 
 	return
 }
@@ -683,8 +661,7 @@ func (w *WsClient) procAccountPosition(j *simplejson.Json) (topic string, event 
 			Locked: item.GetIndex(2).MustString(),
 		}
 	}
-	// Publish to eventbus then to channel
-	topic = toEventTopic("account", []string{"position"})
+	topic = "accountPosition"
 
 	return
 }
@@ -751,8 +728,7 @@ func (w *WsClient) procOrderReport(j *simplejson.Json) (topic string, event *WsO
 	event.LastPrice = j.Get("Y").MustString()
 	event.QuoteOrderQty = j.Get("Q").MustString()
 
-	// Publish to eventbus then to channel
-	topic = toEventTopic("order", []string{"report"})
+	topic = "orderReport"
 
 	return
 }
